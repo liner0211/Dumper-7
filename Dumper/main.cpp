@@ -6,18 +6,10 @@
 #include "CppGenerator.h"
 #include "MappingGenerator.h"
 #include "IDAMappingGenerator.h"
+#include "DumpspaceGenerator.h"
 
 #include "StructManager.h"
 #include "EnumManager.h"
-
-#include "HashStringTableTest.h"
-#include "GeneratorTest.h"
-#include "StructManagerTest.h"
-#include "CollisionManagerTest.h"
-#include "MemberManagerTest.h"
-#include "CppGeneratorTest.h"
-#include "EnumManagerTest.h"
-#include "PackageManagerTest.h"
 
 #include "Generator.h"
 
@@ -40,7 +32,7 @@ DWORD MainThread(HMODULE Module)
 	auto t_1 = std::chrono::high_resolution_clock::now();
 
 	std::cout << "Started Generation [Dumper-7]!\n";
-  
+
 	Generator::InitEngineCore();
 	Generator::InitInternal();
 
@@ -66,6 +58,7 @@ DWORD MainThread(HMODULE Module)
 	Generator::Generate<CppGenerator>();
 	Generator::Generate<MappingGenerator>();
 	Generator::Generate<IDAMappingGenerator>();
+	Generator::Generate<DumpspaceGenerator>();
 
 
 	auto t_C = std::chrono::high_resolution_clock::now();
