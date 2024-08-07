@@ -1,5 +1,7 @@
 #include <format>
 
+#include "Utils.h"
+
 #include "Offsets.h"
 #include "ObjectArray.h"
 #include "OffsetFinder.h"
@@ -10,54 +12,47 @@ void Off::InSDK::ProcessEvent::InitPE()
 {
 	void** Vft = *(void***)ObjectArray::GetByIndex(0).GetAddress();
 
-	auto Resolve32BitRelativeJump = [](void* FunctionPtr) -> uint8_t*
+	/* Primary, and more reliable, check for ProcessEvent */
+	auto IsProcessEvent = [](const uint8_t* FuncAddress, [[maybe_unused]] int32_t Index) -> bool
 	{
-		uint8_t* Address = reinterpret_cast<uint8_t*>(FunctionPtr);
-		if (*Address == 0xE9)
-		{
-			uint8_t* Ret = ((Address + 5) + *reinterpret_cast<int32_t*>(Address + 1));
-
-			if (IsInProcessRange(uintptr_t(Ret)))
-				return Ret;
-		}
-
-		return reinterpret_cast<uint8_t*>(FunctionPtr);
+		return FindPatternInRange({ 0xF7, -0x1, Off::UFunction::FunctionFlags, 0x0, 0x0, 0x0, 0x0, 0x04, 0x0, 0x0 }, FuncAddress, 0x400)
+			&& FindPatternInRange({ 0xF7, -0x1, Off::UFunction::FunctionFlags, 0x0, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0 }, FuncAddress, 0xF00);
 	};
 
-	for (int i = 0; i < 0x150; i++)
+	const void* ProcessEventAddr = nullptr;
+	int32_t ProcessEventIdx = 0;
+
+	auto [FuncPtr, FuncIdx] = IterateVTableFunctions(Vft, IsProcessEvent);
+
+	ProcessEventAddr = FuncPtr;
+	ProcessEventIdx = FuncIdx;
+
+	if (!FuncPtr)
 	{
-		if (!Vft[i] || !IsInProcessRange(reinterpret_cast<uintptr_t>(Vft[i])))
-			break;
+		/* ProcessEvent is sometimes located right after a func with the string L"Accessed None. Might as well check for it, because else we're going to crash anyways. */
+		void* PossiblePEAddr = (void*)FindByWStringInAllSections(L"Accessed None").FindNextFunctionStart();
 
-		if (FindPatternInRange({ 0xF7, -0x1, Off::UFunction::FunctionFlags, 0x0, 0x0, 0x0, 0x0, 0x04, 0x0, 0x0 }, Resolve32BitRelativeJump(Vft[i]), 0x400)
-		&&  FindPatternInRange({ 0xF7, -0x1, Off::UFunction::FunctionFlags, 0x0, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0 }, Resolve32BitRelativeJump(Vft[i]), 0xF00))
+		auto IsSameAddr = [PossiblePEAddr](const uint8_t* FuncAddress, [[maybe_unused]] int32_t Index) -> bool
 		{
-			Off::InSDK::ProcessEvent::PEIndex = i;
-			Off::InSDK::ProcessEvent::PEOffset = GetOffset(Vft[i]);
+			return FuncAddress == PossiblePEAddr;
+		};
 
-			std::cout << std::format("PE-Offset: 0x{:X}\n", Off::InSDK::ProcessEvent::PEOffset);
-			std::cout << std::format("PE-Index: 0x{:X}\n\n", i);
-			return;
-		}
+		auto [FuncPtr2, FuncIdx2] = IterateVTableFunctions(Vft, IsSameAddr);
+		ProcessEventAddr = FuncPtr2;
+		ProcessEventIdx = FuncIdx2;
 	}
 
-	void* PeAddr = (void*)FindByWStringInAllSections(L"Accessed None").FindNextFunctionStart();
-
-	for (int i = 0; i < 0x150; i++)
+	if (ProcessEventAddr)
 	{
-		if (!PeAddr)
-			break;
+		Off::InSDK::ProcessEvent::PEIndex = ProcessEventIdx;
+		Off::InSDK::ProcessEvent::PEOffset = GetOffset(ProcessEventAddr);
 
-		if (Resolve32BitRelativeJump(Vft[i]) == PeAddr)
-		{
-			Off::InSDK::ProcessEvent::PEIndex = i;
-			Off::InSDK::ProcessEvent::PEOffset = GetOffset(PeAddr);
-
-			std::cout << std::format("PE-Offset: 0x{:X}\n", Off::InSDK::ProcessEvent::PEOffset);
-			std::cout << std::format("PE-Index: 0x{:X}\n\n", i);
-			return;
-		}
+		std::cout << std::format("PE-Offset: 0x{:X}\n", Off::InSDK::ProcessEvent::PEOffset);
+		std::cout << std::format("PE-Index: 0x{:X}\n\n", ProcessEventIdx);
+		return;
 	}
+
+	std::cout << "\nCouldn't find ProcessEvent!\n\n" << std::endl;
 }
 
 void Off::InSDK::ProcessEvent::InitPE(int32 Index)
@@ -193,7 +188,7 @@ void Off::InSDK::Text::InitTextOffsets()
 
 	std::cout << std::format("Off::InSDK::Text::TextSize: 0x{:X}\n", Off::InSDK::Text::TextSize);
 	std::cout << std::format("Off::InSDK::Text::TextDatOffset: 0x{:X}\n", Off::InSDK::Text::TextDatOffset);
-	std::cout << std::format("Off::InSDK::Text::InTextDataStringOffset: 0x{:X}\n", Off::InSDK::Text::InTextDataStringOffset);
+	std::cout << std::format("Off::InSDK::Text::InTextDataStringOffset: 0x{:X}\n\n", Off::InSDK::Text::InTextDataStringOffset);
 }
 
 void Off::Init()
@@ -216,7 +211,7 @@ void Off::Init()
 	Off::UStruct::Size = OffsetFinder::FindStructSizeOffset();
 	std::cout << std::format("Off::UStruct::Size: 0x{:X}\n", Off::UStruct::Size);
 
-	Off::UStruct::MinAlignemnt = OffsetFinder::FindMinAlignment();
+	Off::UStruct::MinAlignemnt = OffsetFinder::FindMinAlignmentOffset();
 	std::cout << std::format("Off::UStruct::MinAlignemnts: 0x{:X}\n", Off::UStruct::MinAlignemnt);
 
 	Off::UClass::CastFlags = OffsetFinder::FindCastFlagsOffset();
@@ -233,12 +228,12 @@ void Off::Init()
 
 		Off::FField::Next = OffsetFinder::FindFFieldNextOffset();
 		std::cout << std::format("Off::FField::Next: 0x{:X}\n", Off::FField::Next);
-		
+
 		Off::FField::Name = OffsetFinder::FindFFieldNameOffset();
 		std::cout << std::format("Off::FField::Name: 0x{:X}\n", Off::FField::Name);
 
-		/* 
-		* FNameSize might be wrong at this point of execution. 
+		/*
+		* FNameSize might be wrong at this point of execution.
 		* FField::Flags is not critical so a fix is only applied later in OffsetFinder::PostInitFNameSettings().
 		*/
 		Off::FField::Flags = Off::FField::Name + Off::InSDK::Name::FNameSize;
@@ -274,26 +269,108 @@ void Off::Init()
 
 	Off::ArrayProperty::Inner = OffsetFinder::FindInnerTypeOffset(Off::InSDK::Properties::PropertySize);
 	std::cout << std::format("Off::ArrayProperty::Inner: 0x{:X}\n", Off::ArrayProperty::Inner);
-	
+
 	Off::SetProperty::ElementProp = OffsetFinder::FindSetPropertyBaseOffset(Off::InSDK::Properties::PropertySize);
 	std::cout << std::format("Off::SetProperty::ElementProp: 0x{:X}\n", Off::SetProperty::ElementProp);
-	
+
 	Off::MapProperty::Base = OffsetFinder::FindMapPropertyBaseOffset(Off::InSDK::Properties::PropertySize);
 	std::cout << std::format("Off::MapProperty::Base: 0x{:X}\n", Off::MapProperty::Base) << std::endl;
 
-	Off::ULevel::Actors = OffsetFinder::FindLevelActorsOffset();
-	std::cout << std::format("Off::ULevel::Actors: 0x{:X}\n", Off::ULevel::Actors) << std::endl;
+	Off::InSDK::ULevel::Actors = OffsetFinder::FindLevelActorsOffset();
+	std::cout << std::format("Off::InSDK::ULevel::Actors: 0x{:X}\n", Off::InSDK::ULevel::Actors) << std::endl;
+
+	Off::InSDK::UDataTable::RowMap = OffsetFinder::FindDatatableRowMapOffset();
+	std::cout << std::format("Off::InSDK::UDataTable::RowMap: 0x{:X}\n", Off::InSDK::UDataTable::RowMap) << std::endl;
 
 	OffsetFinder::PostInitFNameSettings();
+
+	std::cout << std::endl;
 
 	Off::ByteProperty::Enum = Off::InSDK::Properties::PropertySize;
 	Off::BoolProperty::Base = Off::InSDK::Properties::PropertySize;
 	Off::ObjectProperty::PropertyClass = Off::InSDK::Properties::PropertySize;
 	Off::StructProperty::Struct = Off::InSDK::Properties::PropertySize;
 	Off::EnumProperty::Base = Off::InSDK::Properties::PropertySize;
-	Off::DelegateProperty::SignatureFunction =  Off::InSDK::Properties::PropertySize;
+	Off::DelegateProperty::SignatureFunction = Off::InSDK::Properties::PropertySize;
 	Off::FieldPathProperty::FieldClass = Off::InSDK::Properties::PropertySize;
 	Off::OptionalProperty::ValueProperty = Off::InSDK::Properties::PropertySize;
 
 	Off::ClassProperty::MetaClass = Off::InSDK::Properties::PropertySize + 0x8; //0x8 inheritance from ObjectProperty
+}
+
+void PropertySizes::Init()
+{
+	InitTDelegateSize();
+	InitFFieldPathSize();
+}
+
+void PropertySizes::InitTDelegateSize()
+{
+	/* If the AudioComponent class or the OnQueueSubtitles member weren't found, fallback to looping GObjects and looking for a Delegate. */
+	auto OnPropertyNotFoudn = [&]() -> void
+	{
+		for (UEObject Obj : ObjectArray())
+		{
+			if (!Obj.IsA(EClassCastFlags::Struct))
+				continue;
+
+			for (UEProperty Prop : Obj.Cast<UEClass>().GetProperties())
+			{
+				if (Prop.IsA(EClassCastFlags::DelegateProperty))
+				{
+					PropertySizes::DelegateProperty = Prop.GetSize();
+					return;
+				}
+			}
+		}
+	};
+
+	const UEClass AudioComponentClass = ObjectArray::FindClassFast("AudioComponent");
+
+	if (!AudioComponentClass)
+		return OnPropertyNotFoudn();
+
+	const UEProperty OnQueueSubtitlesProp = AudioComponentClass.FindMember("OnQueueSubtitles", EClassCastFlags::DelegateProperty);
+
+	if (!OnQueueSubtitlesProp)
+		return OnPropertyNotFoudn();
+
+	PropertySizes::DelegateProperty = OnQueueSubtitlesProp.GetSize();
+}
+
+void PropertySizes::InitFFieldPathSize()
+{
+	if (!Settings::Internal::bUseFProperty)
+		return;
+
+	/* If the SetFieldPathPropertyByName function or the Value parameter weren't found, fallback to looping GObjects and looking for a Delegate. */
+	auto OnPropertyNotFoudn = [&]() -> void
+	{
+		for (UEObject Obj : ObjectArray())
+		{
+			if (!Obj.IsA(EClassCastFlags::Struct))
+				continue;
+
+			for (UEProperty Prop : Obj.Cast<UEClass>().GetProperties())
+			{
+				if (Prop.IsA(EClassCastFlags::FieldPathProperty))
+				{
+					PropertySizes::FieldPathProperty = Prop.GetSize();
+					return;
+				}
+			}
+		}
+	};
+
+	const UEFunction SetFieldPathPropertyByNameFunc = ObjectArray::FindObjectFast<UEFunction>("SetFieldPathPropertyByName", EClassCastFlags::Function);
+
+	if (!SetFieldPathPropertyByNameFunc)
+		return OnPropertyNotFoudn();
+
+	const UEProperty ValueParamProp = SetFieldPathPropertyByNameFunc.FindMember("Value", EClassCastFlags::FieldPathProperty);
+
+	if (!ValueParamProp)
+		return OnPropertyNotFoudn();
+
+	PropertySizes::FieldPathProperty = ValueParamProp.GetSize();
 }

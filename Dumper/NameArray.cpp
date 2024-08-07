@@ -23,24 +23,47 @@ void* FNameEntry::GetAddress()
 	return Address;
 }
 
-void FNameEntry::Init(uint8_t* FirstChunkPtr, int64 NameEntryStringOffset)
+void FNameEntry::Init(const uint8_t* FirstChunkPtr, int64 NameEntryStringOffset)
 {
 	if (Settings::Internal::bUseNamePool)
 	{
 		constexpr int64 NoneStrLen = 0x4;
-		constexpr int64 BytePropertyStrLen = 0xC;
+		constexpr uint16 BytePropertyStrLen = 0xC;
+
+		constexpr uint32 BytePropertyStartAsUint32 = 'etyB'; // "Byte" part of "ByteProperty"
 
 		Off::FNameEntry::NamePool::StringOffset = NameEntryStringOffset;
 		Off::FNameEntry::NamePool::HeaderOffset = NameEntryStringOffset == 6 ? 4 : 0;
 
-		uint16 BytePropertyHeader = *reinterpret_cast<uint16*>(*reinterpret_cast<uint8**>(FirstChunkPtr) + NameEntryStringOffset + NoneStrLen);
+		uint8* AssumedBytePropertyEntry = *reinterpret_cast<uint8* const*>(FirstChunkPtr) + NameEntryStringOffset + NoneStrLen;
 
-		constexpr int32 MaxAllowedShiftCount = 0xFF;
+		/* Check if there's pading after an FNameEntry. Check if there's up to 0x4 bytes padding. */
+		for (int i = 0; i < 0x4; i++)
+		{
+			const uint32 FirstPartOfByteProperty = *reinterpret_cast<const uint32*>(AssumedBytePropertyEntry + NameEntryStringOffset);
+
+			if (FirstPartOfByteProperty == BytePropertyStartAsUint32)
+				break;
+
+			AssumedBytePropertyEntry += 0x1;
+		}
+
+		uint16 BytePropertyHeader = *reinterpret_cast<const uint16*>(AssumedBytePropertyEntry + Off::FNameEntry::NamePool::HeaderOffset);
+
+		/* Shifiting past the size of the header is not allowed, so limmit the shiftcount here */
+		constexpr int32 MaxAllowedShiftCount = sizeof(BytePropertyHeader) * 0x8;
 
 		while (BytePropertyHeader != BytePropertyStrLen && FNameEntryLengthShiftCount < MaxAllowedShiftCount)
 		{			
 			FNameEntryLengthShiftCount++;
 			BytePropertyHeader >>= 1;
+		}
+
+		if (FNameEntryLengthShiftCount == MaxAllowedShiftCount)
+		{
+			std::cout << "\Dumper-7: Error, couldn't get FNameEntryLengthShiftCount!\n" << std::endl;
+			GetStr = [](uint8* NameEntry)->std::string { return "Invalid FNameEntryLengthShiftCount!"; };
+			return;
 		}
 
 		GetStr = [](uint8* NameEntry) -> std::string
@@ -182,6 +205,10 @@ bool NameArray::InitializeNamePool(uint8_t* NamePool)
 		int32 NotNullptrCount = 0x0;
 		bool bFoundFirstPtr = false;
 
+		/* Number of invalid pointers we can encounter before we assume that there are no valid pointers anymore. */
+		constexpr int32 MaxAllowedNumInvalidPtrs = 0x500;
+		int32 NumPtrsSinceLastValid = 0x0;
+
 		for (int j = 0x0; j < 0x10000; j += 8)
 		{
 			const int32 ChunkOffset = i + 8 + j + (i % 8);
@@ -189,12 +216,21 @@ bool NameArray::InitializeNamePool(uint8_t* NamePool)
 			if ((*reinterpret_cast<uint8_t**>(NamePool + ChunkOffset)) != nullptr)
 			{
 				NotNullptrCount++;
+				NumPtrsSinceLastValid = 0;
 
 				if (!bFoundFirstPtr)
 				{
 					bFoundFirstPtr = true;
 					Off::NameArray::ChunksStart = i + 8 + j + (i % 8);
 				}
+			}
+			else
+			{
+				NumPtrsSinceLastValid++;
+
+				/* The last time we've seen a non-nullptr value was 0x500 iterations ago. It's safe to say we wont find any more. */
+				if (NumPtrsSinceLastValid == MaxAllowedNumInvalidPtrs)
+					break;
 			}
 		}
 
@@ -212,8 +248,6 @@ bool NameArray::InitializeNamePool(uint8_t* NamePool)
 
 	constexpr uint64 CoreUObjAsUint64 = 0x6A624F5565726F43; // little endian "jbOUeroC" ["/Script/CoreUObject"]
 	constexpr uint32 NoneAsUint32 = 0x656E6F4E; // little endian "None"
-
-	constexpr int64 CoreUObjectStringLength = sizeof("/S");
 
 	uint8_t** ChunkPtr = reinterpret_cast<uint8_t**>(NamePool + Off::NameArray::ChunksStart);
 
@@ -328,7 +362,7 @@ bool NameArray::TryFindNameArray()
 		if (!IsInProcessRange(Address) || IsBadReadPtr(*reinterpret_cast<void**>(Address)))
 			return false;
 
-		Off::InSDK::NameArray::GNames = GetOffset(reinterpret_cast<void*>(Address));
+		Off::InSDK::NameArray::GNames = GetOffset(Address);
 		return true;
 	}
 
@@ -351,7 +385,7 @@ bool NameArray::TryFindNameArray()
 		if (IsBadReadPtr(ValueOfMoveTargetAsPtr) || ValueOfMoveTargetAsPtr != Names)
 			continue;
 
-		Off::InSDK::NameArray::GNames = GetOffset(reinterpret_cast<void*>(MoveTarget));
+		Off::InSDK::NameArray::GNames = GetOffset(MoveTarget);
 		return true;
 	}
 	
@@ -392,7 +426,7 @@ bool NameArray::TryFindNamePool()
 
 		constexpr int32 SizeOfMovInstructionBytes = 0x7;
 
-		uintptr_t PossibleConstructorAddress = ASMUtils::Resolve32BitRelativeCall(SigOccurrence + SizeOfMovInstructionBytes);
+		const uintptr_t PossibleConstructorAddress = ASMUtils::Resolve32BitRelativeCall(SigOccurrence + SizeOfMovInstructionBytes);
 
 		if (!IsInProcessRange(PossibleConstructorAddress))
 			continue;
@@ -403,18 +437,18 @@ bool NameArray::TryFindNamePool()
 			if (*reinterpret_cast<uint16*>(PossibleConstructorAddress + i) != 0x15FF)
 				continue;
 
-			uintptr_t RelativeCallTarget = ASMUtils::Resolve32BitSectionRelativeCall(PossibleConstructorAddress + i);
+			const uintptr_t RelativeCallTarget = ASMUtils::Resolve32BitSectionRelativeCall(PossibleConstructorAddress + i);
 
 			if (!IsInProcessRange(RelativeCallTarget))
 				continue;
 
-			uintptr_t ValueOfCallTarget = *reinterpret_cast<uintptr_t*>(RelativeCallTarget);
+			const uintptr_t ValueOfCallTarget = *reinterpret_cast<uintptr_t*>(RelativeCallTarget);
 
 			if (ValueOfCallTarget != InitSRWLockAddress && ValueOfCallTarget != RtlInitSRWLockAddress)
 				continue;
 
 			/* Try to find the "ByteProperty" string, as it's always referenced in FNamePool::FNamePool, so we use it to verify that we got the right function */
-			void* StringRef = FindByStringInAllSections(L"ByteProperty", PossibleConstructorAddress, BytePropertySearchRange);
+			MemAddress StringRef = FindByStringInAllSections(L"ByteProperty", PossibleConstructorAddress, BytePropertySearchRange);
 
 			/* We couldn't find a wchar_t string L"ByteProperty", now see if we can find a char string "ByteProperty" */
 			if (!StringRef)
@@ -494,6 +528,62 @@ bool NameArray::TryInit(bool bIsTestOnly)
 	return false;
 }
 
+
+bool NameArray::TryInit(int32 OffsetOverride, bool bIsNamePool)
+{
+	uintptr_t ImageBase = GetImageBase();
+
+	uint8* GNamesAddress = nullptr;
+
+	const bool bIsNameArrayOverride = !bIsNamePool;
+	const bool bIsNamePoolOverride = bIsNamePool;
+
+	bool bFoundNameArray = false;
+	bool bFoundnamePool = false;
+
+	Off::InSDK::NameArray::GNames = OffsetOverride;
+
+	if (bIsNameArrayOverride)
+	{
+		std::cout << std::format("Overwrote offset: 'TNameEntryArray GNames' set as offset 0x{:X}\n", Off::InSDK::NameArray::GNames) << std::endl;
+		GNamesAddress = *reinterpret_cast<uint8**>(ImageBase + Off::InSDK::NameArray::GNames);// Derefernce
+		Settings::Internal::bUseNamePool = false;
+		bFoundNameArray = true;
+	}
+	else if (bIsNamePoolOverride)
+	{
+		std::cout << std::format("Overwrote offset: 'FNamePool GNames' set as offset 0x{:X}\n", Off::InSDK::NameArray::GNames) << std::endl;
+		GNamesAddress = reinterpret_cast<uint8*>(ImageBase + Off::InSDK::NameArray::GNames); // No derefernce
+		Settings::Internal::bUseNamePool = true;
+		bFoundnamePool = true;
+	}
+
+	if (!bFoundNameArray && !bFoundnamePool)
+	{
+		std::cout << "\n\nCould not find GNames!\n\n" << std::endl;
+		return false;
+	}
+
+	if (bFoundNameArray && NameArray::InitializeNameArray(GNamesAddress))
+	{
+		GNames = GNamesAddress;
+		Settings::Internal::bUseNamePool = false;
+		FNameEntry::Init();
+		return true;
+	}
+	else if (bFoundnamePool && NameArray::InitializeNamePool(reinterpret_cast<uint8_t*>(GNamesAddress)))
+	{
+		GNames = GNamesAddress;
+		Settings::Internal::bUseNamePool = true;
+		/* FNameEntry::Init() was moved into NameArray::InitializeNamePool to avoid duplicated logic */
+		return true;
+	}
+
+	std::cout << "The address was overwritten, but couldn't be used. This might be due to GNames-encryption.\n" << std::endl;
+
+	return false;
+}
+
 bool NameArray::SetGNamesWithoutCommiting()
 {
 	/* GNames is already set */
@@ -514,66 +604,6 @@ bool NameArray::SetGNamesWithoutCommiting()
 	}
 
 	std::cout << "\n\nCould not find GNames!\n\n" << std::endl;
-	return false;
-}
-
-bool NameArray::Init()
-{
-	uintptr_t ImageBase = GetImageBase();
-
-	std::cout << "Searching for GNames...\n\n";
-
-	struct Signature
-	{
-		const char* Pattern;
-		int Relative;
-	};
-
-	std::array<Signature, 3> Signatures = { {
-		{ "48 89 3D ? ? ? ? 8B 87 ? ? ? ? 05 ? ? ? ? 99 81 E2 ? ? ? ?", 3 }, // TNameEntryArray
-		{ "48 8D 0D ? ? ? ? E8 ? ? ? ? 4C 8B C0 C6 05", 3 }, // FNamePool
-		{ "48 8D 05 ? ? ? ? 48 83 C4 ? 5F C3 48 89 5C 24", 3 } // FNamePool Back4Blood
-	}};
-
-	uint8_t** GNamesAddress = nullptr;
-
-	for (auto Sig : Signatures)
-	{
-		if (GNamesAddress = reinterpret_cast<uint8_t**>(FindPattern(Sig.Pattern, Sig.Relative, true)))
-			break;
-	}
-
-	if (!GNamesAddress)
-	{
-		std::cout << "GNames couldn't be found\n\n" << std::endl;
-		return false;
-	}
-
-	Off::InSDK::NameArray::GNames = uintptr_t(GNamesAddress) - ImageBase;
-
-	if (NameArray::InitializeNameArray(*GNamesAddress))
-	{
-		GNames = *GNamesAddress;
-		Settings::Internal::bUseNamePool = false;
-		FNameEntry::Init();
-		std::cout << "Found NameArray at offset: 0x" << std::hex << (reinterpret_cast<uintptr_t>(GNamesAddress) - ImageBase) << "\n" << std::endl;
-		return true;
-	}
-	else if (NameArray::InitializeNamePool(reinterpret_cast<uint8_t*>(GNamesAddress)))
-	{
-		GNames = reinterpret_cast<uint8_t*>(GNamesAddress);
-		Settings::Internal::bUseNamePool = true;
-		std::cout << "Found NamePool at offset: 0x" << std::hex << (reinterpret_cast<uintptr_t>(GNamesAddress) - ImageBase) << "\n" << std::endl;
-		/* FNameEntry::Init() was moved into NameArray::InitializeNamePool to avoid duplicated logic */
-		return true;
-	}
-
-	GNames = nullptr;
-	Off::InSDK::NameArray::GNames = 0x0;
-	Settings::Internal::bUseNamePool = false;
-
-	std::cout << "GNames couldn't be found!\n\n";
-
 	return false;
 }
 
@@ -632,7 +662,7 @@ int32 NameArray::GetByteCursor()
 	return Settings::Internal::bUseNamePool ? *reinterpret_cast<int32*>(GNames + Off::NameArray::ByteCursor) : 0;
 }
 
-FNameEntry NameArray::GetNameEntry(void* Name)
+FNameEntry NameArray::GetNameEntry(const void* Name)
 {
 	return ByIndex(GNames, FName(Name).GetCompIdx(), FNameBlockOffsetBits);
 }

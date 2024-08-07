@@ -3,6 +3,8 @@
 #include "MemberWrappers.h"
 #include "EnumWrapper.h"
 
+#include <fstream>
+
 /*
 * USMAP-Header:
 * 
@@ -78,15 +80,6 @@ private:
 
         Latest,
         LatestPlusOne,
-    };
-
-    enum class EUsmapCompressionMethod : uint8
-    {
-        None,
-        Oodle,
-        Brotli,
-        ZStandard,
-        Unknown = 0xFF
     };
 
 private:

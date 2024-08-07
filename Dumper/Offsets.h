@@ -63,6 +63,16 @@ namespace Off
 
 			void InitTextOffsets();
 		}
+
+		namespace ULevel
+		{
+			inline int32 Actors;
+		}
+
+		namespace UDataTable
+		{
+			inline int32 RowMap;
+		}
 	}
 
 	namespace FUObjectArray
@@ -149,8 +159,8 @@ namespace Off
 		inline int32 SuperStruct;
 		inline int32 Children;
 		inline int32 ChildProperties;
-		inline int32 MinAlignemnt;
 		inline int32 Size;
+		inline int32 MinAlignemnt;
 	}
 
 	namespace UFunction
@@ -252,9 +262,16 @@ namespace Off
 	{
 		inline int32 ValueProperty;
 	}
+}
 
-	namespace ULevel
-	{
-		inline int32 Actors;
-	}
+namespace PropertySizes
+{
+	void Init();
+
+	/* These are properties for which their size might change depending on the UE version or compilerflags. */
+	inline int32 DelegateProperty = 0x10;
+	void InitTDelegateSize();
+
+	inline int32 FieldPathProperty = 0x20;
+	void InitFFieldPathSize();
 }

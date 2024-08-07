@@ -73,8 +73,8 @@ std::string MakeNameValid(std::string&& Name)
 }
 
 
-FName::FName(void* Ptr)
-	: Address((uint8*)Ptr)
+FName::FName(const void* Ptr)
+	: Address(static_cast<const uint8*>(Ptr))
 {
 }
 
@@ -87,6 +87,7 @@ void FName::Init(bool bForceGNames)
 		"48 8D ? ? 49 8B ? E8",
 		"48 8D ? ? ? 49 8B ? E8",
 		"48 8D ? ? 48 8B ? E8"
+		"48 8D ? ? ? 48 8B ? E8",
 	};
 
 	MemAddress StringRef = FindByStringInAllSections("ForwardShadingQuality_");
@@ -94,7 +95,8 @@ void FName::Init(bool bForceGNames)
 	int i = 0;
 	while (!AppendString && i < PossibleSigs.size())
 	{
-		AppendString = reinterpret_cast<void(*)(void*, FString&)>(StringRef.RelativePattern(PossibleSigs[i], 0x50, -1 /* auto */));
+		AppendString = static_cast<void(*)(const void*, FString&)>(StringRef.RelativePattern(PossibleSigs[i], 0x50, -1 /* auto */));
+
 		i++;
 	}
 
@@ -106,7 +108,7 @@ void FName::Init(bool bForceGNames)
 
 		if (bInitializedSuccessfully)
 		{
-			ToStr = [](void* Name) -> std::string
+			ToStr = [](const void* Name) -> std::string
 			{
 				if (!Settings::Internal::bUseUoutlineNumberName)
 				{
@@ -134,7 +136,7 @@ void FName::Init(bool bForceGNames)
 
 	std::cout << std::format("Found FName::{} at Offset 0x{:X}\n\n", (Off::InSDK::Name::bIsUsingAppendStringOverToString ? "AppendString" : "ToString"), Off::InSDK::Name::AppendNameToString);
 
-	ToStr = [](void* Name) -> std::string
+	ToStr = [](const void* Name) -> std::string
 	{
 		thread_local FFreableString TempString(1024);
 
@@ -147,14 +149,37 @@ void FName::Init(bool bForceGNames)
 	};
 }
 
-void FName::Init(int32 AppendStringOffset, bool bIsToString)
+void FName::Init(int32 OverrideOffset, EOffsetOverrideType OverrideType, bool bIsNamePool)
 {
-	AppendString = reinterpret_cast<void(*)(void*, FString&)>(GetImageBase() + AppendStringOffset);
+	if (OverrideType == EOffsetOverrideType::GNames)
+	{
+		const bool bInitializedSuccessfully = NameArray::TryInit(OverrideOffset, bIsNamePool);
 
-	Off::InSDK::Name::AppendNameToString = AppendStringOffset;
-	Off::InSDK::Name::bIsUsingAppendStringOverToString = !bIsToString;
+		if (bInitializedSuccessfully)
+		{
+			ToStr = [](const void* Name) -> std::string
+			{
+				if (!Settings::Internal::bUseUoutlineNumberName)
+				{
+					const int32 Number = FName(Name).GetNumber();
 
-	ToStr = [](void* Name) -> std::string
+					if (Number > 0)
+						return NameArray::GetNameEntry(Name).GetString() + "_" + std::to_string(Number - 1);
+				}
+
+				return NameArray::GetNameEntry(Name).GetString();
+			};
+		}
+
+		return;
+	}
+
+	AppendString = reinterpret_cast<void(*)(const void*, FString&)>(GetImageBase() + OverrideOffset);
+
+	Off::InSDK::Name::AppendNameToString = OverrideOffset;
+	Off::InSDK::Name::bIsUsingAppendStringOverToString = OverrideType == EOffsetOverrideType::AppendString;
+
+	ToStr = [](const void* Name) -> std::string
 	{
 		thread_local FFreableString TempString(1024);
 
@@ -185,7 +210,8 @@ void FName::InitFallback()
 	int i = 0;
 	while (!AppendString && i < PossibleSigs.size())
 	{
-		AppendString = reinterpret_cast<void(*)(void*, FString&)>(Conv_NameToStringAddress.RelativePattern(PossibleSigs[i], 0x90, -1 /* auto */));
+		AppendString = static_cast<void(*)(const void*, FString&)>(Conv_NameToStringAddress.RelativePattern(PossibleSigs[i], 0x90, -1 /* auto */));
+
 		i++;
 	}
 
@@ -194,6 +220,9 @@ void FName::InitFallback()
 
 std::string FName::ToString() const
 {
+	if (!Address)
+		return "None";
+
 	std::string OutputString = ToStr(Address);
 
 	size_t pos = OutputString.rfind('/');
@@ -204,6 +233,14 @@ std::string FName::ToString() const
 	return OutputString.substr(pos + 1);
 }
 
+std::string FName::ToRawString() const
+{
+	if (!Address)
+		return "None";
+
+	return ToStr(Address);
+}
+
 std::string FName::ToValidString() const
 {
 	return MakeNameValid(ToString());
@@ -211,12 +248,12 @@ std::string FName::ToValidString() const
 
 int32 FName::GetCompIdx() const 
 {
-	return *reinterpret_cast<int32*>(Address + Off::FName::CompIdx);
+	return *reinterpret_cast<const int32*>(Address + Off::FName::CompIdx);
 }
 
 int32 FName::GetNumber() const
 {
-	return !Settings::Internal::bUseUoutlineNumberName ? *reinterpret_cast<int32*>(Address + Off::FName::Number) : 0x0;
+	return !Settings::Internal::bUseUoutlineNumberName ? *reinterpret_cast<const int32*>(Address + Off::FName::Number) : 0x0;
 }
 
 bool FName::operator==(FName Other) const

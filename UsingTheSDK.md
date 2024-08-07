@@ -17,16 +17,17 @@
    ![image](https://github.com/Encryqed/Dumper-7/assets/64608145/5a9404a7-1b49-4fd2-a3fa-a7467f18f39a)
 2. Drop the contents into your VS projects' directory \
   ![image](https://github.com/Encryqed/Dumper-7/assets/64608145/14d4bb1b-8a23-43f8-8994-8bdae25af005)
-4. If you do not care about your projects' compilation time, add `#include "SDK.hpp"` at the top of your `Main.cpp` file
-5. If you **do** care, and you want faster compilation-times, directly include only the files you require. \
+3. If you do not care about your projects' compilation time, add `#include "SDK.hpp"` at the top of your `Main.cpp` file
+4. If you **do** care, and you want faster compilation-times, directly include only the files you require. \
     Adding `#include "SDK/Engine_classes.hpp"` is a good start in this case.
-6. Add `Basic.cpp` to your VS project
-7. If you call a function from the SDK you need to add the .cpp file, that contains the function-body, to your project. \
+5. Add `Basic.cpp` and `CoreUObject_functions.cpp` to your VS project
+6. If you call a function from the SDK you need to add the .cpp file, that contains the function-body, to your project. \
    Example: \
    Calling `GetViewportSize()` from `APlayerController` requires you to add `Engine_functions.cpp` to your project. \
    ![image](https://github.com/Encryqed/Dumper-7/assets/64608145/c9ecf0c7-ec73-4e6a-8c6d-d7c86c26b5c8)
-
-9. If there are any static_asserts failing, or other errors occuring, during building, read the [Issue](README.md#issues) part of the [ReadMe](README.md)
+7. After attempting to build the SDK go to the "Error List" and make sure to select **`Build Only`**
+  ![image](https://github.com/user-attachments/assets/cd72d55e-64de-4134-a115-6a9a0af80baa)
+8. If there are any static_asserts failing, or other errors occuring, during building, read the [Issue](README.md#issues) part of the [ReadMe](README.md)
 
 ## Using the SDK
 ### 1. Retrieving instances of classes/structs to manipulate them
@@ -54,7 +55,7 @@
   - Static functions
     ```c++
     /* static functions do not require an instance, they are automatically called using their DefaultObject */
-    SDK::FName MyNewName = SDK::UKismetStringLibrary::Conv_StringToName("DemoNetDriver");
+    SDK::FName MyNewName = SDK::UKismetStringLibrary::Conv_StringToName(L"DemoNetDriver");
     ```
 ### 3. Checking a UObject's type
   - With EClassCastFlags
@@ -153,6 +154,20 @@ DWORD MainThread(HMODULE Module)
         {
             std::cout << Obj->GetFullName() << "\n";
         }
+    }
+
+    /* You might need to loop all levels in UWorld::Levels */
+    SDK::ULevel* Level = World->PersistentLevel;
+    SDK::TArray<SDK::AActor*>& volatile Actors = Level->Actors;
+
+    for (SDK::AActor* Actor : Actors)
+    {
+        /* The 2nd and 3rd checks are equal, prefer using EClassCastFlags if available for your class. */
+        if (!Actor || !Actor->IsA(SDK::EClassCastFlags::Pawn) || !Actor->IsA(SDK::APawn::StaticClass()))
+            continue;
+
+        SDK::APawn* Pawn = static_cast<SDK::APawn*>(Actor);
+        // Use Pawn here
     }
 
     /* 

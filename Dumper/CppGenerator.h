@@ -11,6 +11,8 @@
 
 #include "Generator.h"
 
+#include <fstream>
+
 namespace fs = std::filesystem;
 
 
@@ -85,7 +87,7 @@ private:
     static std::string MakeMemberStringWithoutName(const std::string& Type, std::string&& Comment);
 
     static std::string GenerateBytePadding(const int32 Offset, const int32 PadSize, std::string&& Reason);
-    static std::string GenerateBitPadding(uint8 UnderlayingSizeBytes, const int32 Offset, const int32 PadSize, std::string&& Reason);
+    static std::string GenerateBitPadding(uint8 UnderlayingSizeBytes, const uint8 PrevBitPropertyEndBit, const int32 Offset, const int32 PadSize, std::string&& Reason);
 
     static std::string GenerateMembers(const StructWrapper& Struct, const MemberManager& Members, int32 SuperSize, int32 SuperLastMemberEnd, int32 SuperAlign, int32 PackageIndex = -1);
     static std::string GenerateFunctionInHeader(const MemberManager& Members);
@@ -95,7 +97,7 @@ private:
     static std::string GenerateSingleFunction(const FunctionWrapper& Func, const std::string& StructName, StreamType& FunctionFile, StreamType& ParamFile);
     static std::string GenerateFunctions(const StructWrapper& Struct, const MemberManager& Members, const std::string& StructName, StreamType& FunctionFile, StreamType& ParamFile);
 
-    static void GenerateStruct(const StructWrapper& Struct, StreamType& StructFile, StreamType& FunctionFile, StreamType& ParamFile, int32 PackageIndex = -1);
+    static void GenerateStruct(const StructWrapper& Struct, StreamType& StructFile, StreamType& FunctionFile, StreamType& ParamFile, int32 PackageIndex = -1, const std::string& StructNameOverride = std::string());
 
     static void GenerateEnum(const EnumWrapper& Enum, StreamType& StructFile);
 

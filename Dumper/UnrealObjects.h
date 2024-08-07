@@ -131,13 +131,15 @@ public:
 	std::string StringifyObjFlags() const;
 
 	std::string GetName() const;
+	std::string GetNameWithPath() const;
 	std::string GetValidName() const;
 	std::string GetCppName() const;
-	std::string GetFullName(int32& OutNameLength);
+	std::string GetFullName(int32& OutNameLength) const;
 	std::string GetFullName() const;
+	std::string GetPathName() const;
 
 	explicit operator bool() const;
-	explicit operator uint8*();
+	explicit operator uint8* ();
 	bool operator==(const UEObject& Other) const;
 	bool operator!=(const UEObject& Other) const;
 
@@ -445,4 +447,3 @@ public:
 
 	std::string GetCppType() const;
 };
-
